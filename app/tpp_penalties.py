@@ -144,10 +144,13 @@ class _Tables(HTMLParser):
 
 
 @router.get("/player/{player_id}")
-def player_penalties(player_id: str):
+def player_penalties(player_id: str, page: int = 1):
+    """page: Transfermarkt shows long lists 15 rows at a time; ask for page 2, 3... for the rest."""
     if not player_id.isdigit():
         raise HTTPException(status_code=400, detail="Player id must be a number.")
     url = f"https://www.transfermarkt.com/-/elfmetertore/spieler/{player_id}"
+    if page > 1:
+        url += f"/page/{int(page)}"
     try:
         status, content = _fetch(url)
     except Exception as exc:  # Network trouble: report it, never crash.
@@ -158,4 +161,4 @@ def player_penalties(player_id: str):
     parser.feed(content.decode("utf-8", errors="replace"))
     tables = parser.tables
     del parser, content  # Free the page straight away: the service runs on a small instance.
-    return {"id": player_id, "url": url, "tables": tables}
+    return {"id": player_id, "page": page, "url": url, "tables": tables}
