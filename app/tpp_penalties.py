@@ -8,10 +8,11 @@ TPP Stats plugin on MMU can pick out the ones taken for Manchester United.
 
 Endpoint:  GET /penalties/player/{player_id}
 
-Every library is imported only when a request comes in, so this file can never
-stop the service from starting.
+Uses only Python's own HTML reader, and imports any web library only when a
+request comes in, so this file can never stop the service from starting.
 """
 import re
+from html.parser import HTMLParser
 
 from fastapi import APIRouter, HTTPException
 
@@ -27,10 +28,10 @@ HEADERS = {
 }
 
 
-def _fetch(url: str) -> bytes:
+def _fetch(url: str):
     """Fetch a page with whichever HTTP library this service has installed."""
     try:
-        from curl_cffi import requests as cffi  # Used by newer versions of the service.
+        from curl_cffi import requests as cffi
 
         res = cffi.get(url, headers=HEADERS, timeout=30, impersonate="chrome")
         return res.status_code, res.content
@@ -61,19 +62,91 @@ def _fetch(url: str) -> bytes:
         return exc.code, b""
 
 
-def _text(el) -> str:
-    return re.sub(r"\s+", " ", el.text_content()).strip()
+def _clean(s: str) -> str:
+    return re.sub(r"\s+", " ", s).strip()
+
+
+class _Tables(HTMLParser):
+    """Collects every <table class="items"> with the <h2> before it. Tables nested inside a
+    cell (Transfermarkt puts the player or club box in one) count as part of that cell."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.tables = []
+        self.stack = []  # One entry per open <table>: the items table dict, or None for others.
+        self.h2 = None
+        self.last_h2 = ""
+        self.cur = None  # The items table being read.
+
+    def _in_cell(self):
+        return self.cur is not None and self.cur["cell"] is not None
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if self._in_cell():
+            for key in ("title", "alt"):
+                if a.get(key, "").strip():
+                    self.cur["cell"]["titles" if key == "title" else "alts"].append(a[key].strip())
+        if tag == "h2" and self.cur is None:
+            self.h2 = []
+        if tag == "table":
+            if self._in_cell() or self.cur is not None:
+                self.stack.append(None)  # Nested table: part of the current cell.
+                return
+            if "items" in (a.get("class") or "").split():
+                self.cur = {"heading": self.last_h2, "head": [], "rows": [], "section": "", "row": None, "cell": None}
+                self.stack.append(self.cur)
+            else:
+                self.stack.append(None)
+            return
+        if self.cur is None or not self.stack or self.stack[-1] is not self.cur:
+            return  # Structure tags count only at the items table's own level.
+        if tag in ("thead", "tbody", "tfoot"):
+            self.cur["section"] = tag
+        elif tag == "tr":
+            self.cur["row"] = []
+        elif tag in ("td", "th"):
+            self.cur["cell"] = {"text": "", "titles": [a["title"].strip()] if a.get("title", "").strip() else [], "alts": [], "kind": tag}
+
+    def handle_endtag(self, tag):
+        if tag == "h2" and self.h2 is not None:
+            self.last_h2 = _clean("".join(self.h2))
+            self.h2 = None
+            return
+        if tag == "table":
+            if not self.stack:
+                return
+            top = self.stack.pop()
+            if top is not None and top is self.cur:
+                self.tables.append({"heading": top["heading"], "head": top["head"], "rows": top["rows"]})
+                self.cur = None
+            return
+        if self.cur is None or not self.stack or self.stack[-1] is not self.cur:
+            return
+        if tag in ("td", "th") and self.cur["cell"] is not None:
+            cell = self.cur["cell"]
+            cell["text"] = _clean(cell["text"])
+            if self.cur["section"] == "thead" or cell["kind"] == "th" and self.cur["section"] != "tbody":
+                self.cur["head"].append(cell["text"])
+            elif self.cur["row"] is not None:
+                self.cur["row"].append({"text": cell["text"], "titles": cell["titles"], "alts": cell["alts"]})
+            self.cur["cell"] = None
+        elif tag == "tr" and self.cur["row"] is not None:
+            if self.cur["row"]:
+                self.cur["rows"].append(self.cur["row"])
+            self.cur["row"] = None
+
+    def handle_data(self, data):
+        if self.h2 is not None:
+            self.h2.append(data)
+        if self._in_cell():
+            self.cur["cell"]["text"] += data + " "
 
 
 @router.get("/player/{player_id}")
 def player_penalties(player_id: str):
     if not player_id.isdigit():
         raise HTTPException(status_code=400, detail="Player id must be a number.")
-    try:
-        from lxml import html
-    except ImportError:
-        raise HTTPException(status_code=500, detail="lxml is not installed on this service.")
-
     url = f"https://www.transfermarkt.com/-/elfmetertore/spieler/{player_id}"
     try:
         status, content = _fetch(url)
@@ -81,22 +154,8 @@ def player_penalties(player_id: str):
         raise HTTPException(status_code=502, detail=f"Transfermarkt could not be reached: {exc}")
     if status != 200:
         raise HTTPException(status_code=status if status >= 400 else 502, detail="Transfermarkt returned an error.")
-
-    doc = html.fromstring(content)
-    tables = []
-    for table in doc.xpath('//table[contains(@class,"items")]'):
-        heading_el = table.xpath("preceding::h2[1]")
-        heading = _text(heading_el[0]) if heading_el else ""
-        head = [_text(th) for th in table.xpath(".//thead//th")]
-        rows = []
-        for tr in table.xpath("./tbody/tr"):
-            cells = []
-            for td in tr.xpath("./td"):
-                titles = [t.strip() for t in td.xpath(".//@title") if t.strip()]
-                alts = [a.strip() for a in td.xpath(".//img/@alt") if a.strip()]
-                cells.append({"text": _text(td), "titles": titles, "alts": alts})
-            if cells:
-                rows.append(cells)
-        tables.append({"heading": heading, "head": head, "rows": rows})
-    del doc  # Free the page straight away: the service runs on a small instance.
+    parser = _Tables()
+    parser.feed(content.decode("utf-8", errors="replace"))
+    tables = parser.tables
+    del parser, content  # Free the page straight away: the service runs on a small instance.
     return {"id": player_id, "url": url, "tables": tables}
