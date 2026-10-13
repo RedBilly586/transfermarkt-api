@@ -120,3 +120,5 @@ def health() -> dict:
 
 if __name__ == "__main__":
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+from app.tpp_penalties import router as tpp_penalties_router
+app.include_router(tpp_penalties_router, prefix="/penalties", tags=["penalties"])
