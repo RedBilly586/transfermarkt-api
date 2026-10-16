@@ -194,7 +194,8 @@ def player_debuts(player_id: str):
     scripts = sorted(set(re.findall(r"""<script[^>]+src=["']([^"']+)["']""", html_text)))[:30]
     found_in_scripts = []
     for src in scripts:
-        if "transfermarkt" not in src and not src.startswith("/"):
+        # The player components (national team career, performance tables) hold the data address.
+        if "svelte-components/player-" not in src:
             continue
         full = src if src.startswith("http") else "https://www.transfermarkt.com" + src
         try:
@@ -204,10 +205,12 @@ def player_debuts(player_id: str):
         if st != 200:
             continue
         text = body.decode("utf-8", errors="replace")
-        for m in re.finditer(r"""https?://[a-z0-9.-]*tmapi[a-z0-9.-]*\.[a-z]{2,}[^"'`\s<>]{0,120}|["'`](/(?:player|players|performance|national|debut)[a-z0-9/_${}.-]{3,120})["'`]""", text):
-            found_in_scripts.append(m.group(0)[:160])
+        for m in re.finditer(r"""https?://[a-z0-9.-]+\.[a-z]{2,}/[^"'`\s<>]{0,140}|["'`]/[a-z0-9_-]+/[a-z0-9/_${}.?=&-]{3,140}["'`]""", text, re.I):
+            u = m.group(0)
+            if re.search(r"api|technology|performance|national|player|stats|debut|ceapi", u, re.I) and not re.search(r"\.(png|svg|jpg|css|woff)", u, re.I):
+                found_in_scripts.append(src.rsplit("/", 2)[-2] + ": " + u[:160])
         del text, body
-        if len(found_in_scripts) > 40:
+        if len(found_in_scripts) > 80:
             break
     attrs = sorted(set(re.findall(r"""\s(data-[a-z0-9-]+|:[a-z0-9-]+|player-id|spieler-id)=["']""", html_text)))[:40]
     snippets = []
@@ -217,7 +220,7 @@ def player_debuts(player_id: str):
         if len(snippets) >= 8:
             break
     del parser, content, html_text
-    return {"id": player_id, "url": url, "title": _clean(title.group(1)) if title else "", "page_size": size, "table_classes": table_classes, "headings": h2s, "components": components, "data_links": data_links, "api_hosts": api_hosts, "scripts": scripts, "found_in_scripts": sorted(set(found_in_scripts))[:40], "attributes": attrs, "snippets": snippets, "tables": tables}
+    return {"id": player_id, "url": url, "title": _clean(title.group(1)) if title else "", "page_size": size, "table_classes": table_classes, "headings": h2s, "components": components, "data_links": data_links, "api_hosts": api_hosts, "scripts": scripts, "found_in_scripts": sorted(set(found_in_scripts))[:60], "attributes": attrs, "snippets": snippets, "tables": tables}
 
 
 # Other player pages, read the same way (for checking their layout, then importing).
@@ -258,7 +261,8 @@ def player_page(kind: str, player_id: str):
     scripts = sorted(set(re.findall(r"""<script[^>]+src=["']([^"']+)["']""", html_text)))[:30]
     found_in_scripts = []
     for src in scripts:
-        if "transfermarkt" not in src and not src.startswith("/"):
+        # The player components (national team career, performance tables) hold the data address.
+        if "svelte-components/player-" not in src:
             continue
         full = src if src.startswith("http") else "https://www.transfermarkt.com" + src
         try:
@@ -268,10 +272,12 @@ def player_page(kind: str, player_id: str):
         if st != 200:
             continue
         text = body.decode("utf-8", errors="replace")
-        for m in re.finditer(r"""https?://[a-z0-9.-]*tmapi[a-z0-9.-]*\.[a-z]{2,}[^"'`\s<>]{0,120}|["'`](/(?:player|players|performance|national|debut)[a-z0-9/_${}.-]{3,120})["'`]""", text):
-            found_in_scripts.append(m.group(0)[:160])
+        for m in re.finditer(r"""https?://[a-z0-9.-]+\.[a-z]{2,}/[^"'`\s<>]{0,140}|["'`]/[a-z0-9_-]+/[a-z0-9/_${}.?=&-]{3,140}["'`]""", text, re.I):
+            u = m.group(0)
+            if re.search(r"api|technology|performance|national|player|stats|debut|ceapi", u, re.I) and not re.search(r"\.(png|svg|jpg|css|woff)", u, re.I):
+                found_in_scripts.append(src.rsplit("/", 2)[-2] + ": " + u[:160])
         del text, body
-        if len(found_in_scripts) > 40:
+        if len(found_in_scripts) > 80:
             break
     attrs = sorted(set(re.findall(r"""\s(data-[a-z0-9-]+|:[a-z0-9-]+|player-id|spieler-id)=["']""", html_text)))[:40]
     snippets = []
@@ -281,5 +287,5 @@ def player_page(kind: str, player_id: str):
         if len(snippets) >= 8:
             break
     del parser, content, html_text
-    return {"id": player_id, "url": url, "title": _clean(title.group(1)) if title else "", "page_size": size, "table_classes": table_classes, "headings": h2s, "components": components, "data_links": data_links, "api_hosts": api_hosts, "scripts": scripts, "found_in_scripts": sorted(set(found_in_scripts))[:40], "attributes": attrs, "snippets": snippets, "tables": tables}
+    return {"id": player_id, "url": url, "title": _clean(title.group(1)) if title else "", "page_size": size, "table_classes": table_classes, "headings": h2s, "components": components, "data_links": data_links, "api_hosts": api_hosts, "scripts": scripts, "found_in_scripts": sorted(set(found_in_scripts))[:60], "attributes": attrs, "snippets": snippets, "tables": tables}
 
