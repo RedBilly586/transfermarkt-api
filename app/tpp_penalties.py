@@ -340,8 +340,9 @@ def _find(obj, want):
 
 @router.get("/games/{player_id}")
 def player_games(player_id: str):
-    """Every game of a player's career, one short line each (from Transfermarkt's data server):
-    date, season, competition, national team or club, club and opponent ids, goals, minutes."""
+    """Every game a player actually played in (from Transfermarkt's data server), one short line each:
+    date, season (start year), competition id, national-team game or not, his team and the opponent,
+    goals, own goals, minutes, and his age that day (years plus days)."""
     if not player_id.isdigit():
         raise HTTPException(status_code=400, detail="Player id must be a number.")
     import json
@@ -355,23 +356,33 @@ def player_games(player_id: str):
         raise HTTPException(status_code=status if status >= 400 else 502, detail=f"Transfermarkt's data server returned {status}.")
     data = json.loads(content.decode("utf-8", errors="replace"))
     del content
-    games = (data.get("data") or {}).get("performance") or []
     out = []
-    for g in games:
+    for g in (data.get("data") or {}).get("performance") or []:
         info = g.get("gameInformation") or {}
         clubs = g.get("clubsInformation") or {}
-        stats = g.get("statistics") or {}
+        st = g.get("statistics") or {}
+        gen = st.get("generalStatistics") or {}
+        gs = st.get("goalStatistics") or {}
+        pt = st.get("playingTimeStatistics") or {}
+        minutes = pt.get("playedMinutes") or 0
+        if not minutes:
+            continue  # Not in the squad, or on the bench without coming on.
+        dt = (info.get("date") or {}).get("dateTimeUTC") or ""
         out.append({
-            "date": _find(info.get("date"), ["date"]) if isinstance(info.get("date"), dict) else info.get("date"),
+            "game": info.get("gameId"),
+            "date": dt[:10],
             "season": info.get("seasonId"),
             "competition": info.get("competitionId"),
-            "national": info.get("isNationalGame"),
-            "club": _find(clubs.get("club"), ["id"]) if isinstance(clubs.get("club"), dict) else clubs.get("club"),
-            "opponent": _find(clubs.get("opponent"), ["id"]) if isinstance(clubs.get("opponent"), dict) else clubs.get("opponent"),
-            "goals": _find(stats.get("goalStatistics"), ["goal"]),
-            "minutes": _find(stats.get("playingTimeStatistics"), ["minute"]),
+            "national": bool(info.get("isNationalGame")),
+            "club": (clubs.get("club") or {}).get("clubId"),
+            "opponent": (clubs.get("opponent") or {}).get("clubId"),
+            "goals": gs.get("goalsScoredTotal") or 0,
+            "own_goals": gs.get("ownGoalsScored") or 0,
+            "minutes": minutes,
+            "starting": bool(pt.get("isStarting")),
+            "age": gen.get("age"),
+            "age_days": gen.get("ageDiscrepancyDays"),
         })
-    first = games[0] if games else None
-    del data, games
-    return {"id": player_id, "count": len(out), "first_game_in_full": first, "games": out[:5], "games_are_cut_to": 5}
+    del data
+    return {"id": player_id, "count": len(out), "games": out}
 
