@@ -323,3 +323,55 @@ def tmapi(path: str, full: int = 0):
     del content
     return data if full else {"url": url, "summary": _summary(data)}
 
+
+def _find(obj, want):
+    """The first value whose key contains every word in want (case-insensitive), searching nested data."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            kl = k.lower()
+            if all(w in kl for w in want) and not isinstance(v, (dict, list)):
+                return v
+        for v in obj.values():
+            r = _find(v, want)
+            if r is not None:
+                return r
+    return None
+
+
+@router.get("/games/{player_id}")
+def player_games(player_id: str):
+    """Every game of a player's career, one short line each (from Transfermarkt's data server):
+    date, season, competition, national team or club, club and opponent ids, goals, minutes."""
+    if not player_id.isdigit():
+        raise HTTPException(status_code=400, detail="Player id must be a number.")
+    import json
+
+    url = f"https://tmapi.transfermarkt.technology/player/{player_id}/performance-game"
+    try:
+        status, content = _fetch(url)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Transfermarkt could not be reached: {exc}")
+    if status != 200:
+        raise HTTPException(status_code=status if status >= 400 else 502, detail=f"Transfermarkt's data server returned {status}.")
+    data = json.loads(content.decode("utf-8", errors="replace"))
+    del content
+    games = (data.get("data") or {}).get("performance") or []
+    out = []
+    for g in games:
+        info = g.get("gameInformation") or {}
+        clubs = g.get("clubsInformation") or {}
+        stats = g.get("statistics") or {}
+        out.append({
+            "date": _find(info.get("date"), ["date"]) if isinstance(info.get("date"), dict) else info.get("date"),
+            "season": info.get("seasonId"),
+            "competition": info.get("competitionId"),
+            "national": info.get("isNationalGame"),
+            "club": _find(clubs.get("club"), ["id"]) if isinstance(clubs.get("club"), dict) else clubs.get("club"),
+            "opponent": _find(clubs.get("opponent"), ["id"]) if isinstance(clubs.get("opponent"), dict) else clubs.get("opponent"),
+            "goals": _find(stats.get("goalStatistics"), ["goal"]),
+            "minutes": _find(stats.get("playingTimeStatistics"), ["minute"]),
+        })
+    first = games[0] if games else None
+    del data, games
+    return {"id": player_id, "count": len(out), "first_game_in_full": first, "games": out[:5], "games_are_cut_to": 5}
+
