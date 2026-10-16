@@ -186,8 +186,18 @@ def player_debuts(player_id: str):
     table_classes = re.findall(r"<table[^>]*class=\"([^\"]*)\"", html_text)[:20]
     h2s = [_clean(re.sub(r"<[^>]+>", " ", h)) for h in re.findall(r"<h2[^>]*>(.*?)</h2>", html_text, re.S)][:20]
     size = len(html_text)
+    # Where the page loads its data from when it is filled in by JavaScript.
+    components = sorted(set(re.findall(r"<(tm-[a-z0-9-]+)", html_text)))[:30]
+    data_links = sorted(set(re.findall(r"""["'](/(?:ceapi|api)/[^"'\s<>]{3,200})["']""", html_text)))[:40]
+    attrs = sorted(set(re.findall(r"""\s(data-[a-z0-9-]+|:[a-z0-9-]+|player-id|spieler-id)=["']""", html_text)))[:40]
+    snippets = []
+    for m in re.finditer(r"debut|nationalmannschaft|national-team|ceapi", html_text, re.I):
+        a = max(0, m.start() - 120)
+        snippets.append(_clean(html_text[a:m.end() + 160]))
+        if len(snippets) >= 8:
+            break
     del parser, content, html_text
-    return {"id": player_id, "url": url, "title": _clean(title.group(1)) if title else "", "page_size": size, "table_classes": table_classes, "headings": h2s, "tables": tables}
+    return {"id": player_id, "url": url, "title": _clean(title.group(1)) if title else "", "page_size": size, "table_classes": table_classes, "headings": h2s, "components": components, "data_links": data_links, "attributes": attrs, "snippets": snippets, "tables": tables}
 
 
 # Other player pages, read the same way (for checking their layout, then importing).
@@ -220,6 +230,16 @@ def player_page(kind: str, player_id: str):
     table_classes = re.findall(r"<table[^>]*class=\"([^\"]*)\"", html_text)[:20]
     h2s = [_clean(re.sub(r"<[^>]+>", " ", h)) for h in re.findall(r"<h2[^>]*>(.*?)</h2>", html_text, re.S)][:20]
     size = len(html_text)
+    # Where the page loads its data from when it is filled in by JavaScript.
+    components = sorted(set(re.findall(r"<(tm-[a-z0-9-]+)", html_text)))[:30]
+    data_links = sorted(set(re.findall(r"""["'](/(?:ceapi|api)/[^"'\s<>]{3,200})["']""", html_text)))[:40]
+    attrs = sorted(set(re.findall(r"""\s(data-[a-z0-9-]+|:[a-z0-9-]+|player-id|spieler-id)=["']""", html_text)))[:40]
+    snippets = []
+    for m in re.finditer(r"debut|nationalmannschaft|national-team|ceapi", html_text, re.I):
+        a = max(0, m.start() - 120)
+        snippets.append(_clean(html_text[a:m.end() + 160]))
+        if len(snippets) >= 8:
+            break
     del parser, content, html_text
-    return {"id": player_id, "url": url, "title": _clean(title.group(1)) if title else "", "page_size": size, "table_classes": table_classes, "headings": h2s, "tables": tables}
+    return {"id": player_id, "url": url, "title": _clean(title.group(1)) if title else "", "page_size": size, "table_classes": table_classes, "headings": h2s, "components": components, "data_links": data_links, "attributes": attrs, "snippets": snippets, "tables": tables}
 
