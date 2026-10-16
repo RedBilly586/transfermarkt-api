@@ -189,6 +189,26 @@ def player_debuts(player_id: str):
     # Where the page loads its data from when it is filled in by JavaScript.
     components = sorted(set(re.findall(r"<(tm-[a-z0-9-]+)", html_text)))[:30]
     data_links = sorted(set(re.findall(r"""["'](/(?:ceapi|api)/[^"'\s<>]{3,200})["']""", html_text)))[:40]
+    # Absolute data addresses (Transfermarkt's data server is on transfermarkt.technology) and script files.
+    api_hosts = sorted(set(re.findall(r"""https?://[a-z0-9.-]*(?:tmapi|api)[a-z0-9.-]*\.[a-z]{2,}[^"'\s<>]{0,120}""", html_text)))[:30]
+    scripts = sorted(set(re.findall(r"""<script[^>]+src=["']([^"']+)["']""", html_text)))[:30]
+    found_in_scripts = []
+    for src in scripts:
+        if "transfermarkt" not in src and not src.startswith("/"):
+            continue
+        full = src if src.startswith("http") else "https://www.transfermarkt.com" + src
+        try:
+            st, body = _fetch(full)
+        except Exception:
+            continue
+        if st != 200:
+            continue
+        text = body.decode("utf-8", errors="replace")
+        for m in re.finditer(r"""https?://[a-z0-9.-]*tmapi[a-z0-9.-]*\.[a-z]{2,}[^"'`\s<>]{0,120}|["'`](/(?:player|players|performance|national|debut)[a-z0-9/_${}.-]{3,120})["'`]""", text):
+            found_in_scripts.append(m.group(0)[:160])
+        del text, body
+        if len(found_in_scripts) > 40:
+            break
     attrs = sorted(set(re.findall(r"""\s(data-[a-z0-9-]+|:[a-z0-9-]+|player-id|spieler-id)=["']""", html_text)))[:40]
     snippets = []
     for m in re.finditer(r"debut|nationalmannschaft|national-team|ceapi", html_text, re.I):
@@ -197,7 +217,7 @@ def player_debuts(player_id: str):
         if len(snippets) >= 8:
             break
     del parser, content, html_text
-    return {"id": player_id, "url": url, "title": _clean(title.group(1)) if title else "", "page_size": size, "table_classes": table_classes, "headings": h2s, "components": components, "data_links": data_links, "attributes": attrs, "snippets": snippets, "tables": tables}
+    return {"id": player_id, "url": url, "title": _clean(title.group(1)) if title else "", "page_size": size, "table_classes": table_classes, "headings": h2s, "components": components, "data_links": data_links, "api_hosts": api_hosts, "scripts": scripts, "found_in_scripts": sorted(set(found_in_scripts))[:40], "attributes": attrs, "snippets": snippets, "tables": tables}
 
 
 # Other player pages, read the same way (for checking their layout, then importing).
@@ -233,6 +253,26 @@ def player_page(kind: str, player_id: str):
     # Where the page loads its data from when it is filled in by JavaScript.
     components = sorted(set(re.findall(r"<(tm-[a-z0-9-]+)", html_text)))[:30]
     data_links = sorted(set(re.findall(r"""["'](/(?:ceapi|api)/[^"'\s<>]{3,200})["']""", html_text)))[:40]
+    # Absolute data addresses (Transfermarkt's data server is on transfermarkt.technology) and script files.
+    api_hosts = sorted(set(re.findall(r"""https?://[a-z0-9.-]*(?:tmapi|api)[a-z0-9.-]*\.[a-z]{2,}[^"'\s<>]{0,120}""", html_text)))[:30]
+    scripts = sorted(set(re.findall(r"""<script[^>]+src=["']([^"']+)["']""", html_text)))[:30]
+    found_in_scripts = []
+    for src in scripts:
+        if "transfermarkt" not in src and not src.startswith("/"):
+            continue
+        full = src if src.startswith("http") else "https://www.transfermarkt.com" + src
+        try:
+            st, body = _fetch(full)
+        except Exception:
+            continue
+        if st != 200:
+            continue
+        text = body.decode("utf-8", errors="replace")
+        for m in re.finditer(r"""https?://[a-z0-9.-]*tmapi[a-z0-9.-]*\.[a-z]{2,}[^"'`\s<>]{0,120}|["'`](/(?:player|players|performance|national|debut)[a-z0-9/_${}.-]{3,120})["'`]""", text):
+            found_in_scripts.append(m.group(0)[:160])
+        del text, body
+        if len(found_in_scripts) > 40:
+            break
     attrs = sorted(set(re.findall(r"""\s(data-[a-z0-9-]+|:[a-z0-9-]+|player-id|spieler-id)=["']""", html_text)))[:40]
     snippets = []
     for m in re.finditer(r"debut|nationalmannschaft|national-team|ceapi", html_text, re.I):
@@ -241,5 +281,5 @@ def player_page(kind: str, player_id: str):
         if len(snippets) >= 8:
             break
     del parser, content, html_text
-    return {"id": player_id, "url": url, "title": _clean(title.group(1)) if title else "", "page_size": size, "table_classes": table_classes, "headings": h2s, "components": components, "data_links": data_links, "attributes": attrs, "snippets": snippets, "tables": tables}
+    return {"id": player_id, "url": url, "title": _clean(title.group(1)) if title else "", "page_size": size, "table_classes": table_classes, "headings": h2s, "components": components, "data_links": data_links, "api_hosts": api_hosts, "scripts": scripts, "found_in_scripts": sorted(set(found_in_scripts))[:40], "attributes": attrs, "snippets": snippets, "tables": tables}
 
