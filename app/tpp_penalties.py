@@ -177,8 +177,49 @@ def player_debuts(player_id: str):
         raise HTTPException(status_code=502, detail=f"Transfermarkt could not be reached: {exc}")
     if status != 200:
         raise HTTPException(status_code=status if status >= 400 else 502, detail="Transfermarkt returned an error.")
+    html_text = content.decode("utf-8", errors="replace")
     parser = _Tables()
-    parser.feed(content.decode("utf-8", errors="replace"))
+    parser.feed(html_text)
     tables = parser.tables
-    del parser, content
-    return {"id": player_id, "url": url, "tables": tables}
+    # Diagnostic while the page layout is being checked: what the page is, and which tables it has.
+    title = re.search(r"<title>(.*?)</title>", html_text, re.S | re.I)
+    table_classes = re.findall(r"<table[^>]*class=\"([^\"]*)\"", html_text)[:20]
+    h2s = [_clean(re.sub(r"<[^>]+>", " ", h)) for h in re.findall(r"<h2[^>]*>(.*?)</h2>", html_text, re.S)][:20]
+    size = len(html_text)
+    del parser, content, html_text
+    return {"id": player_id, "url": url, "title": _clean(title.group(1)) if title else "", "page_size": size, "table_classes": table_classes, "headings": h2s, "tables": tables}
+
+
+# Other player pages, read the same way (for checking their layout, then importing).
+_PAGES = {
+    "debuts": "debuets",
+    "national": "nationalmannschaft",
+    "goals": "alletore",
+}
+
+
+@router.get("/page/{kind}/{player_id}")
+def player_page(kind: str, player_id: str):
+    """kind: debuts, national (national-team career, tournament by tournament) or goals (every goal)."""
+    if kind not in _PAGES:
+        raise HTTPException(status_code=400, detail="Unknown page: use one of " + ", ".join(_PAGES))
+    if not player_id.isdigit():
+        raise HTTPException(status_code=400, detail="Player id must be a number.")
+    url = f"https://www.transfermarkt.com/-/{_PAGES[kind]}/spieler/{player_id}"
+    try:
+        status, content = _fetch(url)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Transfermarkt could not be reached: {exc}")
+    if status != 200:
+        raise HTTPException(status_code=status if status >= 400 else 502, detail="Transfermarkt returned an error.")
+    html_text = content.decode("utf-8", errors="replace")
+    parser = _Tables()
+    parser.feed(html_text)
+    tables = parser.tables
+    title = re.search(r"<title>(.*?)</title>", html_text, re.S | re.I)
+    table_classes = re.findall(r"<table[^>]*class=\"([^\"]*)\"", html_text)[:20]
+    h2s = [_clean(re.sub(r"<[^>]+>", " ", h)) for h in re.findall(r"<h2[^>]*>(.*?)</h2>", html_text, re.S)][:20]
+    size = len(html_text)
+    del parser, content, html_text
+    return {"id": player_id, "url": url, "title": _clean(title.group(1)) if title else "", "page_size": size, "table_classes": table_classes, "headings": h2s, "tables": tables}
+
