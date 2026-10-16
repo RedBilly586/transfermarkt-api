@@ -6,7 +6,8 @@ returns that page's tables as plain data (heading, column headings, and each
 cell's text plus any club / competition names held in image titles), so the
 TPP Stats plugin on MMU can pick out the ones taken for Manchester United.
 
-Endpoint:  GET /penalties/player/{player_id}
+Endpoints:  GET /penalties/player/{player_id}   (penalties scored and missed)
+            GET /penalties/debuts/{player_id}   (his debut for each club and competition)
 
 Uses only Python's own HTML reader, and imports any web library only when a
 request comes in, so this file can never stop the service from starting.
@@ -162,3 +163,22 @@ def player_penalties(player_id: str, page: int = 1):
     tables = parser.tables
     del parser, content  # Free the page straight away: the service runs on a small instance.
     return {"id": player_id, "page": page, "url": url, "tables": tables}
+
+
+@router.get("/debuts/{player_id}")
+def player_debuts(player_id: str):
+    """A player's debut for each club and competition, from Transfermarkt's debuts page."""
+    if not player_id.isdigit():
+        raise HTTPException(status_code=400, detail="Player id must be a number.")
+    url = f"https://www.transfermarkt.com/-/debuets/spieler/{player_id}"
+    try:
+        status, content = _fetch(url)
+    except Exception as exc:  # Network trouble: report it, never crash.
+        raise HTTPException(status_code=502, detail=f"Transfermarkt could not be reached: {exc}")
+    if status != 200:
+        raise HTTPException(status_code=status if status >= 400 else 502, detail="Transfermarkt returned an error.")
+    parser = _Tables()
+    parser.feed(content.decode("utf-8", errors="replace"))
+    tables = parser.tables
+    del parser, content
+    return {"id": player_id, "url": url, "tables": tables}
