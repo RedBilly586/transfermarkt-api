@@ -289,3 +289,37 @@ def player_page(kind: str, player_id: str):
     del parser, content, html_text
     return {"id": player_id, "url": url, "title": _clean(title.group(1)) if title else "", "page_size": size, "table_classes": table_classes, "headings": h2s, "components": components, "data_links": data_links, "api_hosts": api_hosts, "scripts": scripts, "found_in_scripts": sorted(set(found_in_scripts))[:60], "attributes": attrs, "snippets": snippets, "tables": tables}
 
+
+def _summary(obj, depth=0):
+    """A short view of a big JSON reply: field names, list lengths and the first two entries of each list."""
+    if depth > 4:
+        return "..."
+    if isinstance(obj, dict):
+        return {k: _summary(v, depth + 1) for k, v in list(obj.items())[:40]}
+    if isinstance(obj, list):
+        return {"_count": len(obj), "_first": [_summary(x, depth + 1) for x in obj[:2]]}
+    return obj
+
+
+@router.get("/tmapi/{path:path}")
+def tmapi(path: str, full: int = 0):
+    """Transfermarkt's own data server (used by its national team, debut and performance pages).
+    Default: a summary of the reply. full=1: the whole reply."""
+    if not re.match(r"^[A-Za-z0-9/_.-]{3,200}$", path):
+        raise HTTPException(status_code=400, detail="Bad path.")
+    url = f"https://tmapi.transfermarkt.technology/{path}"
+    try:
+        status, content = _fetch(url)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Transfermarkt could not be reached: {exc}")
+    if status != 200:
+        raise HTTPException(status_code=status if status >= 400 else 502, detail=f"Transfermarkt's data server returned {status}.")
+    import json
+
+    try:
+        data = json.loads(content.decode("utf-8", errors="replace"))
+    except ValueError:
+        raise HTTPException(status_code=502, detail="Transfermarkt's data server did not send data.")
+    del content
+    return data if full else {"url": url, "summary": _summary(data)}
+
