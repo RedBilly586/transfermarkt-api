@@ -456,3 +456,83 @@ def coach_check(coach_id: str, page: str = ""):
         })
         del parser, content, html_text
     return {"id": coach_id, "pages": out}
+
+
+def _coach_html(page: str, coach_id: str) -> str:
+    url = f"https://www.transfermarkt.com/-/{page}/trainer/{coach_id}"
+    status, content = _fetch(url)
+    if status != 200:
+        raise HTTPException(status_code=status if status >= 400 else 502, detail=f"Transfermarkt returned {status} for {page}.")
+    return content.decode("utf-8", errors="replace")
+
+
+def _dmy(s: str) -> str:
+    """'26/27 (01/07/2026)' or '15/10/2026' -> '2026-07-01'; '' if there is no date."""
+    m = re.search(r"(\d{2})/(\d{2})/(\d{4})", s or "")
+    return f"{m.group(3)}-{m.group(2)}-{m.group(1)}" if m else ""
+
+
+def _cell(row, i, title=False):
+    if i >= len(row):
+        return ""
+    c = row[i]
+    if title and c.get("titles"):
+        return _clean(re.sub(r"<[^>]+>", " ", c["titles"][-1]))
+    return _clean(c.get("text", ""))
+
+
+@router.get("/coach/seasons/{coach_id}")
+def coach_seasons(coach_id: str):
+    """A manager's record season by season and club by club, totalled from his match list.
+    His History table says which club he was in charge of on each date."""
+    coach_id = re.sub(r"\D", "", coach_id)
+    if not coach_id:
+        raise HTTPException(status_code=400, detail="Coach id must be a number.")
+    p = _Tables()
+    p.feed(_coach_html("stationen", coach_id))
+    spells = []
+    for t in p.tables:
+        if "History" not in str(t.get("heading", "")):
+            continue
+        for r in t.get("rows", []):
+            club = _cell(r, 1, True) or _cell(r, 0, True)
+            spells.append({"club": club, "role": _cell(r, 1), "from": _dmy(_cell(r, 2)), "to": _dmy(_cell(r, 3)), "matches_tm": _cell(r, 4)})
+    p = _Tables()
+    p.feed(_coach_html("leistungsdatenDetail", coach_id))
+    seasons = {}
+    rows_read = 0
+    unplaced = 0
+    for t in p.tables:
+        if "Detailed" not in str(t.get("heading", "")):
+            continue
+        for r in t.get("rows", []):
+            date = _dmy(_cell(r, 0))
+            score = re.search(r"(\d+)\s*:\s*(\d+)", _cell(r, 6))
+            if not date or not score:
+                continue
+            rows_read += 1
+            home, away = _cell(r, 4, True), _cell(r, 8, True)
+            club = ""
+            for s in spells:
+                if s["from"] and s["from"] <= date and (not s["to"] or date <= s["to"] or "expected" in s.get("to", "")):
+                    if s["club"] in (home, away):
+                        club = s["club"]
+                        break
+            if not club:
+                unplaced += 1
+                continue
+            gh, ga = int(score.group(1)), int(score.group(2))
+            gf, gc = (gh, ga) if club == home else (ga, gh)
+            key = (_cell(r, 2), club)
+            s = seasons.setdefault(key, {"season": key[0], "club": club, "p": 0, "w": 0, "d": 0, "l": 0, "gf": 0, "ga": 0, "competitions": set()})
+            s["p"] += 1
+            s["w" if gf > gc else ("d" if gf == gc else "l")] += 1
+            s["gf"] += gf
+            s["ga"] += gc
+            s["competitions"].add(_cell(r, 1, True))
+    out = []
+    for s in seasons.values():
+        s["competitions"] = sorted(c for c in s["competitions"] if c)
+        out.append(s)
+    out.sort(key=lambda x: x["season"])
+    return {"id": coach_id, "spells": spells, "matches_read": rows_read, "matches_not_placed": unplaced, "seasons": out}
