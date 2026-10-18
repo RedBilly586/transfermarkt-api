@@ -338,6 +338,15 @@ def _find(obj, want):
     return None
 
 
+def _own_goals(gs: dict) -> int:
+    """Own goals in one game. Transfermarkt has used more than one name for this field, so take any
+    goal-statistics field whose name mentions own goals."""
+    for k, v in (gs or {}).items():
+        if "own" in k.lower() and isinstance(v, (int, float)) and v > 0:
+            return int(v)
+    return 0
+
+
 @router.get("/games/{player_id}")
 def player_games(player_id: str):
     """Every game a player actually played in (from Transfermarkt's data server), one short line each:
@@ -377,7 +386,7 @@ def player_games(player_id: str):
             "club": (clubs.get("club") or {}).get("clubId"),
             "opponent": (clubs.get("opponent") or {}).get("clubId"),
             "goals": gs.get("goalsScoredTotal") or 0,
-            "own_goals": gs.get("ownGoalsScored") or 0,
+            "own_goals": _own_goals(gs),
             "minutes": minutes,
             "starting": bool(pt.get("isStarting")),
             "age": gen.get("age"),
@@ -386,3 +395,64 @@ def player_games(player_id: str):
     del data
     return {"id": player_id, "count": len(out), "games": out}
 
+
+
+# ---------- Managers (Transfermarkt coach pages) — layout check before building the import ----------
+
+@router.get("/coach/find")
+def coach_find(name: str):
+    """Transfermarkt coach ids for a name, from Transfermarkt's own search."""
+    from urllib.parse import quote
+    url = f"https://www.transfermarkt.com/schnellsuche/ergebnis/schnellsuche?query={quote(name)}"
+    try:
+        status, content = _fetch(url)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Transfermarkt could not be reached: {exc}")
+    html_text = content.decode("utf-8", errors="replace")
+    found = {}
+    for slug, cid in re.findall(r'href="/([a-z0-9-]+)/profil/trainer/(\d+)"', html_text):
+        found.setdefault(cid, slug)
+    return {"name": name, "status": status, "coaches": [{"id": k, "slug": v} for k, v in found.items()][:10]}
+
+
+# Pages that may hold a manager's record season by season; the check reads them all.
+_COACH_PAGES = ["profil", "leistungsdatenVerein", "leistungsdatenDetails", "leistungsdaten", "bilanz", "stationen"]
+
+
+@router.get("/coach/check/{coach_id}")
+def coach_check(coach_id: str, page: str = ""):
+    """What each coach page holds: headings and the first rows of every table."""
+    if not coach_id.isdigit():
+        raise HTTPException(status_code=400, detail="Coach id must be a number.")
+    out = []
+    for p in ([page] if page else _COACH_PAGES):
+        url = f"https://www.transfermarkt.com/-/{p}/trainer/{coach_id}"
+        try:
+            status, content = _fetch(url)
+        except Exception as exc:
+            out.append({"page": p, "error": str(exc)})
+            continue
+        html_text = content.decode("utf-8", errors="replace")
+        parser = _Tables()
+        parser.feed(html_text)
+        tables = parser.tables
+        trimmed = []
+        for t in tables[:8]:
+            if isinstance(t, dict):
+                t = {k: (v[:6] if isinstance(v, list) else v) for k, v in t.items()}
+            elif isinstance(t, list):
+                t = t[:6]
+            trimmed.append(t)
+        out.append({
+            "page": p,
+            "url": url,
+            "status": status,
+            "headings": [_clean(re.sub(r"<[^>]+>", " ", h)) for h in re.findall(r"<h2[^>]*>(.*?)</h2>", html_text, re.S)][:15],
+            "table_classes": re.findall(r"<table[^>]*class=\"([^\"]*)\"", html_text)[:10],
+            "components": sorted(set(re.findall(r"<(tm-[a-z0-9-]+)", html_text)))[:15],
+            "data_links": sorted(set(re.findall(r"""["'](/(?:ceapi|api)/[^"'\s<>]{3,200})["']""", html_text)))[:15],
+            "page_links": sorted(set(re.findall(r'href="/[a-z0-9-]+/([a-zA-Z]+)/trainer/' + coach_id, html_text)))[:30],
+            "tables": trimmed,
+        })
+        del parser, content, html_text
+    return {"id": coach_id, "pages": out}
